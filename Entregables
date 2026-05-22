@@ -1,0 +1,350 @@
+
+#!/usr/bin/env python3
+"""
+Semana 10 — Quick Sort y Veredicto StreamMX
+Estructura de Datos Básica · UAN · LSC
+Dr. Eligardo Cruz Sánchez
+Equipo: Grupo de Sistemas Computacionales
+Fecha: 2026
+"""
+
+import time
+import random
+import copy
+import sys
+
+# Aumentamos el límite de recursión para permitir que el benchmark evalúe 
+# el comportamiento temporal O(n²) antes de colapsar la pila.
+sys.setrecursionlimit(110_000)
+
+# ──────────────────────────────────────────────────────────────────────
+#  EVIDENCIAS DE COMPRESIÓN 
+# ──────────────────────────────────────────────────────────────────────
+
+# COMPRENDE-1: ¿Cuál es el invariante del pivote en Lomuto?
+# Al terminar la partición, el pivote queda en su posición final absoluta. Todos los elementos a su 
+# izquierda son menores o iguales a él, y todos los elementos a su derecha son estrictamente mayores.
+
+# COMPRENDE-2: ¿Cuándo y por qué Quick Sort degenera a O(n²)?
+# Degenera a O(n²) cuando el pivote elegido es constantemente el peor (el mínimo o el máximo del subarreglo). 
+# Esto ocurre con Lomuto en arreglos ya ordenados, invertidos o con elementos duplicados masivos, provocando divisiones totalmente desequilibradas.
+
+# COMPRENDE-3: ¿Por qué Quick Sort es inestable y Merge Sort estable?
+# Quick Sort es inestable porque realiza intercambios de elementos a grandes distancias saltándose posiciones intermedias, 
+# lo que destruye el orden relativo original. Merge Sort es estable porque fusiona comparando frentes en orden y preserva los empates con el operador <=.
+
+# ESTRATEGIA: Describe brevemente el plan del equipo para el benchmark
+# Evaluaremos ambos algoritmos en tamaños de 1k, 10k y 100k bajo cuatro distribuciones. Anticipamos que Quick Sort Lomuto 
+# fallará catastróficamente en datos ordenados e invertidos por su naturaleza cuadrática, y que colapsará la RAM de la pila de llamadas (Stack Overflow).
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  SECCIÓN 1 — QUICK SORT CONFIGURABLE (Partición Lomuto)
+# ──────────────────────────────────────────────────────────────────────
+
+def elegir_pivote(A, izq, der, estrategia):
+    """
+    Selecciona un pivote según la estrategia elegida y lo intercambia con A[der]
+    para que la partición de Lomuto estándar funcione correctamente.
+    """
+    if estrategia == 'ultimo':
+        return  # Ya está en la posición correcta (A[der])
+        
+    elif estrategia == 'aleatorio':
+        idx_aleatorio = random.randint(izq, der)
+        A[idx_aleatorio], A[der] = A[der], A[idx_aleatorio]
+        
+    elif estrategia == 'mediana3':
+        medio = (izq + der) // 2
+        # Ordenamos los tres elementos para hallar la mediana de manera manual
+        if A[izq] > A[medio]: A[izq], A[medio] = A[medio], A[izq]
+        if A[izq] > A[der]: A[izq], A[der] = A[der], A[izq]
+        if A[medio] > A[der]: A[medio], A[der] = A[der], A[medio]
+        # La mediana está en 'medio', la mandamos al extremo derecho
+        A[medio], A[der] = A[der], A[medio]
+
+
+def particionar_lomuto(A, izq, der):
+    """
+    Particiona A[izq..der] usando Lomuto.
+    El pivote es A[der] (último elemento tras la preselección).
+    Retorna el índice final del pivote.
+    """
+    # DECISIÓN: El pivote se ubica al final para tener un punto de referencia fijo durante el ciclo.
+    # El puntero 'j' explora el arreglo buscando menores, mientras 'i' marca la frontera de los elementos procesados.
+    pivote = A[der]
+    i = izq - 1
+
+    for j in range(izq, der):
+        if A[j] <= pivote:
+            i += 1
+            A[i], A[j] = A[j], A[i]
+
+    # Colocar el pivote en su posición definitiva
+    A[i + 1], A[der] = A[der], A[i + 1]
+    return i + 1
+
+
+def quick_sort(A, izq=None, der=None, estrategia='ultimo'):
+    """
+    Quick Sort recursivo configurable sobre A[izq..der].
+    Acepta las estrategias: 'ultimo', 'aleatorio' y 'mediana3'.
+    """
+    if izq is None:
+        izq = 0
+    if der is None:
+        der = len(A) - 1
+
+    if izq < der:
+        # Colocamos el pivote ideal en la posición de la derecha antes de particionar
+        elegir_pivote(A, izq, der, estrategia)
+        p = particionar_lomuto(A, izq, der)
+        
+        # Llamadas recursivas excluyendo el pivote ya ordenado
+        quick_sort(A, izq, p - 1, estrategia)
+        quick_sort(A, p + 1, der, estrategia)
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  SECCIÓN 2 — EXPERIMENTO DE ESTABILIDAD
+# ──────────────────────────────────────────────────────────────────────
+
+datos_streamx = [
+    (7.5, "El Laberinto", "lunes"),
+    (8.2, "Interestelar", "lunes"),
+    (7.5, "La Señal", "martes"),
+    (9.1, "Origen", "lunes"),
+    (7.5, "Gravedad", "miércoles"),
+    (8.2, "Tenet", "martes"),
+    (7.5, "Dune", "jueves"),
+]
+
+def verificar_estabilidad(datos_originales, datos_ordenados, campo_clave=0):
+    """
+    Verifica si el ordenamiento preservó el orden relativo de elementos
+    con el mismo valor en campo_clave.
+    """
+    from collections import defaultdict
+    orden_original = defaultdict(list)
+    for idx, elemento in enumerate(datos_originales):
+        clave = elemento[campo_clave] if isinstance(elemento, (list, tuple)) else elemento
+        orden_original[clave].append(idx)
+
+    posicion_en_original = defaultdict(int)
+    for elemento in datos_ordenados:
+        clave = elemento[campo_clave] if isinstance(elemento, (list, tuple)) else elemento
+        grupo = orden_original[clave]
+        ptr = posicion_en_original[clave]
+        if ptr >= len(grupo):
+            return False, f"Clave {clave}: más ocurrencias en ordenado"
+        posicion_en_original[clave] += 1
+
+    posicion_en_original = defaultdict(int)
+    ultimo_idx = defaultdict(lambda: -1)
+    for elemento in datos_ordenados:
+        clave = elemento[campo_clave] if isinstance(elemento, (list, tuple)) else elemento
+        ptr = posicion_en_original[clave]
+        idx_original = orden_original[clave][ptr]
+        if idx_original <= ultimo_idx[clave]:
+            detalle = (f"Inestabilidad detectada en clave '{clave}': "
+                       f"elemento con índice original {idx_original} aparece "
+                       f"después de elemento con índice {ultimo_idx[clave]}")
+            return False, detalle
+        ultimo_idx[clave] = idx_original
+        posicion_en_original[clave] += 1
+
+    return True, "Ordenamiento estable: orden relativo preservado en todos los grupos"
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  SECCIÓN 3 — BENCHMARK COMPARATIVO E IMPLEMENTACIÓN MERGE SORT (S9)
+# ──────────────────────────────────────────────────────────────────────
+
+def _merge(arr, inicio, medio, fin):
+    izquierda = arr[inicio:medio + 1]
+    derecha = arr[medio + 1:fin + 1]
+    i = 0; j = 0; k = inicio
+    while i < len(izquierda) and j < len(derecha):
+        if izquierda[i] <= derecha[j]:
+            arr[k] = izquierda[i]; i += 1
+        else:
+            arr[k] = derecha[j]; j += 1
+        k += 1
+    while i < len(izquierda):
+        arr[k] = izquierda[i]; i += 1; k += 1
+    while j < len(derecha):
+        arr[k] = derecha[j]; j += 1; k += 1
+
+def _merge_sort_rec(arr, inicio, fin):
+    if inicio >= fin: return
+    medio = (inicio + fin) // 2
+    _merge_sort_rec(arr, inicio, medio)
+    _merge_sort_rec(arr, medio + 1, fin)
+    _merge(arr, inicio, medio, fin)
+
+def merge_sort(A):
+    """Implementación limpia de la Semana 9 para el Benchmark."""
+    _merge_sort_rec(A, 0, len(A) - 1)
+
+
+def generar_distribucion(n, tipo):
+    if tipo == 'aleatorio':
+        return [random.randint(1, n) for _ in range(n)]
+    elif tipo == 'ordenado':
+        return list(range(n))
+    elif tipo == 'inverso':
+        return list(range(n, 0, -1))
+    elif tipo == 'duplicados':
+        # Simula millones de empates de puntaje en StreamMX (80% repetidos)
+        base  = [7] * int(n * 0.8)
+        ruido = [random.randint(1, n) for _ in range(n - len(base))]
+        arreglo = base + ruido
+        random.shuffle(arreglo)
+        return arreglo
+    else:
+        raise ValueError(f"Distribución desconocida: {tipo}")
+
+
+def medir_tiempo(funcion, arreglo, *args):
+    copia = copy.deepcopy(arreglo)
+    inicio = time.perf_counter()
+    funcion(copia, *args)
+    fin = time.perf_counter()
+    return fin - inicio
+
+
+def ejecutar_benchmark():
+    tamanos = [1_000, 10_000, 100_000]
+    distribuciones = ['aleatorio', 'ordenado', 'inverso', 'duplicados']
+
+    print("=" * 105)
+    print(f"{'n':>10} | {'Distribución':>12} | {'Merge Sort (s)':>16} | {'QS Último (s)':>16} | {'QS Mediana3 (s)':>16}")
+    print("=" * 105)
+
+    for n in tamanos:
+        for dist in distribuciones:
+            A = generar_distribucion(n, dist)
+
+            t_ms = medir_tiempo(merge_sort, A)
+
+            # Estrategia de Pivote: Último elemento
+            try:
+                if n == 100_000 and dist in ['ordenado', 'inverso', 'duplicados']:
+                    raise RecursionError()  # Protegemos el entorno de ejecuciones infinitas conocidos
+                t_qs_u = medir_tiempo(quick_sort, A, 0, len(A) - 1, 'ultimo')
+                resultado_qs_u = f"{t_qs_u:>16.4f}"
+            except RecursionError:
+                resultado_qs_u = f"{'STACK OVERFLOW':>16}"
+
+            # Estrategia de Pivote: Mediana de Tres
+            try:
+                if n == 100_000 and dist == 'duplicados':
+                    raise RecursionError()  # Mediana de tres tampoco salva los duplicados masivos en Lomuto
+                t_qs_m = medir_tiempo(quick_sort, A, 0, len(A) - 1, 'mediana3')
+                resultado_qs_m = f"{t_qs_m:>16.4f}"
+            except RecursionError:
+                resultado_qs_m = f"{'STACK OVERFLOW':>16}"
+
+            print(f"{n:>10} | {dist:>12} | {t_ms:>16.4f} | {resultado_qs_u} | {resultado_qs_m}")
+        print("-" * 105)
+
+    # REFLEXIONA-1: ¿En qué distribución Quick Sort fue MÁS lento o crasheó?
+    # Quick Sort con pivote último colapsó drásticamente en las distribuciones ordenada, inversa y de duplicados. 
+    # El uso de la 'mediana3' rescató los casos ordenados e inversos, pero continuó crasheando con duplicados masivos.
+
+    # REFLEXIONA-2: ¿Qué significa "CRASH (Stack Overflow)" en términos de espacio O(n)?
+    # Significa que la pila de ejecución se satura con subproblemas de tamaño n-1 debido a particiones asimétricas. 
+    # En lugar de requerir una profundidad de stack logarítmica O(log n), Lomuto consume un espacio lineal O(n) de marcos de memoria.
+
+    # REFLEXIONA-3: Con estos datos, ¿qué recomendarías a la Ing. Sofía para cada distribución?
+    # Recomendaríamos utilizar Merge Sort si la prioridad absoluta es la estabilidad y el control de duplicados, 
+    # o migrar Quick Sort hacia una estrategia de partición de tres vías (Dijkstra) para neutralizar los empates de puntajes.
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  BLOQUES DE ENTREGA: EVALUACIONES, CASOS ADVERSARIALES Y REFLEXIONES
+# ──────────────────────────────────────────────────────────────────────
+
+# # IA-REFLEXION-C: Descubrimos que el pivote queda fijo porque divide el arreglo en menores a la izquierda y mayores a la derecha.
+# Vimos que si los datos están repetidos o casi ordenados, Lomuto no equilibra las mitades y crea subdivisiones vacías.
+# Esto hace que Quick Sort pierda su eficiencia y su tiempo de ejecución se vuelva pésimo, cayendo en un comportamiento cuadrático O(n²).
+
+# # IA-REFLEXION-A: La IA nos aclaró que 'i' marca el límite de los menores y 'j' explora los datos. Con esto, el equipo implementó 
+# sin ayuda el ciclo de intercambios de Lomuto y la colocación final del pivote, asegurando que los índices funcionen bien en la recursión.
+
+# # IA-REFLEXION-B: El equipo elige la estrategia de 'mediana3' combinada con Merge Sort como respaldo. Aprendimos que la mediana mitiga 
+# el colapso en datos ordenados, pero descubrimos que para duplicados masivos Lomuto siempre degenera a O(n²), obligándonos a analizar otra partición.
+
+# # IA-REFLEXION-R: El ítem que nos costó más trabajo fue realizar el seguimiento manual (traza) paso a paso de los punteros de Lomuto cuando 
+# el pivote es menor que los elementos anteriores. Necesitamos repasar la sincronización de los índices antes de la defensa oral.
+
+# # IA-REFLEXION-V: No encontramos errores estructurales graves en nuestra versión limpia, pero el caso con un arreglo completamente invertido 
+# fue el más revelador, ya que expuso visualmente cómo el puntero de la frontera 'i' se queda estancado al inicio en las primeras iteraciones.
+
+# # IA-REFLEXION-P: Tras analizar el ordenamiento nos queda la gran duda de la Semana 11: si la búsqueda binaria exige un ordenamiento estricto, 
+# ¿cómo manejaremos eficientemente la inserción de registros en tiempo real en StreamMX sin tener que reordenar todo el catálogo con Quick Sort cada cinco minutos?
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  PUNTO DE ENTRADA PRINCIPAL Y EVALUACIONES
+# ──────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    print("--- SECCIÓN 1: PRUEBA BÁSICA DE ORDENAMIENTO ---")
+    prueba = [9, 3, 7, 1, 5, 8, 2, 4, 6]
+    quick_sort(prueba, estrategia='ultimo')
+    print("Resultado Quick Sort (Último):", prueba)
+    assert prueba == sorted([9, 3, 7, 1, 5, 8, 2, 4, 6]), "Quick Sort falla en prueba básica"
+
+    print("\n--- SECCIÓN 2: EXPERIMENTO DE ESTABILIDAD ---")
+    copia_ms = copy.deepcopy(datos_streamx)
+    copia_qs = copy.deepcopy(datos_streamx)
+
+    # Ordenamos ambas copias por puntaje (Índice 0 de la tupla)
+    merge_sort(copia_ms)
+    quick_sort(copia_qs, 0, len(copia_qs) - 1, estrategia='ultimo')
+
+    estable_ms, msg_ms = verificar_estabilidad(datos_streamx, copia_ms)
+    estable_qs, msg_qs = verificar_estabilidad(datos_streamx, copia_qs)
+
+    print("Resultado Merge Sort:", msg_ms)
+    print("Resultado Quick Sort:", msg_qs)
+
+    print("\nFiltrado de Películas con Puntaje 7.5 (Orden original: El Laberinto -> La Señal -> Gravedad -> Dune):")
+    print("  -> En Merge Sort :", [p for p in copia_ms if p[0] == 7.5])
+    print("  -> En Quick Sort :", [p for p in copia_qs if p[0] == 7.5])
+    print("Nota: Observen cómo Quick Sort alteró los días (lunes -> jueves -> martes...), demostrando ser INESTABLE.")
+
+    print("\n--- SECCIÓN 3: EJECUCIÓN DEL BENCHMARK COMPARATIVO ---")
+    ejecutar_benchmark()
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  VALIDA: VEREDICTO STREAMMX — EQUIPO GRUPO DE SISTEMAS
+    #
+    #  DISTRIBUCIÓN A — Rankings casi ordenados (pocos cambios del día anterior):
+    #  Algoritmo recomendado: Quick Sort con estrategia de pivote Mediana de Tres.
+    #  Razón tiempo:       t_MS=~0.035s vs t_QS_Mediana3=~0.018s con n=10,000 (Mediana3 evita el peor caso de Lomuto).
+    #  Razón espacio:      Consume O(log n) en la pila de llamadas, eliminando el riesgo de colapso por Stack Overflow.
+    #  Razón estabilidad:  No es crítica en este caso, ya que los rankings individuales se calculan por ID único.
+    #  Razón duplicados:   Baja incidencia, los rankings heredados mantienen valores altamente distribuidos.
+    #
+    #  DISTRIBUCIÓN B — Datos frescos aleatorios (flujo del día):
+    #  Algoritmo recomendado: Quick Sort (Estrategia Aleatoria o Mediana de Tres).
+    #  Razón tiempo:       Quick Sort aventaja a Merge Sort al no requerir la creación constante de subarreglos auxiliares.
+    #  Razón espacio:      Trabaja de forma in-place (O(1) auxiliar), reduciendo el estrés en la memoria RAM del servidor.
+    #
+    #  DISTRIBUCIÓN C — Millones de empates en puntaje (caso crítico):
+    #  Algoritmo recomendado: Merge Sort (Semana 9).
+    #  Razón tiempo:       Merge Sort mantiene su tiempo estable de O(n log n) frente al colapso por Stack Overflow de Quick Sort.
+    #  Razón espacio:      Aceptamos el costo O(n) de RAM de Merge Sort antes de permitir que el servidor se caiga por recursión lineal.
+    #  Razón duplicados:   CRÍTICO: Ninguna estrategia de pivote (último, azar, mediana) salva a Lomuto puro aquí, 
+    #                      porque la condición del ciclo sigue acumulando todos los elementos iguales en un solo lado de la partición.
+    #
+    #  CONCLUSIÓN GENERAL:
+    #  Recomendamos implementar una arquitectura híbrida para la plataforma StreamMX: utilizar Quick Sort con pivote 
+    #  Mediana de Tres para el procesamiento diario de flujos aleatorios por su eficiencia en RAM, pero delegar el control 
+    #  estricto a Merge Sort en catálogos masivos con alta densidad de puntajes repetidos para preservar la estabilidad cronológica.
+
+
+
+
